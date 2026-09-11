@@ -31,6 +31,21 @@ python3 scripts/build_html_report.py \
 
 Open `output/research-atlas.html` in a browser. The repository includes no private NotebookLM data; the examples are synthetic.
 
+## Optional: connect an already-authorized notebooklm-py CLI
+
+If `notebooklm` is already installed and authenticated on the local machine, the optional bridge can export a notebook's source list, ask one normal question, and build a report in one command:
+
+```bash
+python3 scripts/export_notebooklm_atlas.py \
+  --notebook <notebook-id> \
+  --question "What are the main findings?" \
+  --output-dir ./output/private-notebook-export \
+  --title "My research atlas" \
+  --yes
+```
+
+This bridge is not a bundled dependency and does not install `notebooklm-py`. It performs a local authentication check, calls `source list --json`, then `ask --json`; it intentionally never uses `ask --new`, which deletes the active server-side conversation. `--yes` is required because asking adds a normal conversation turn. The resulting `sources.json` and `analysis.json` can be private—review them before sharing or committing.
+
 ## Use your NotebookLM exports
 
 Create a source-list JSON export and one or more Q&A JSON exports through your existing, authorized NotebookLM workflow. Then run:
@@ -56,7 +71,7 @@ This repository is itself the portable artifact. Point an agent at [SKILL.md](SK
 ./install.sh --target /path/to/skills/notebooklm-html-atlas
 ```
 
-The installer copies `SKILL.md` and `scripts/`; it never downloads dependencies or contacts a service. If your harness uses another skill directory, use `--target` or give it this cloned repository directly.
+The installer copies `SKILL.md`, `references/`, and `scripts/`; it never downloads dependencies or contacts a service. If your harness uses another skill directory, use `--target` or give it this cloned repository directly.
 
 ## Data boundaries
 

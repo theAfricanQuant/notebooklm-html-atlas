@@ -15,7 +15,7 @@ Create a static research report from a NotebookLM source-list export and zero or
 - Citations link claims to their source cards. Explain that a citation represents the evidence NotebookLM returned, not independent fact-checking.
 - Use native SVG for causal diagrams; do not add Mermaid or a JavaScript chart dependency.
 
-## Build a report
+## Build from existing exports
 
 ```bash
 python3 scripts/build_html_report.py \
@@ -26,6 +26,21 @@ python3 scripts/build_html_report.py \
 ```
 
 Add `--qa` again for each additional Q&A export. Open the generated HTML locally and confirm source links before sharing it.
+
+## Optional: export with an already-authorized notebooklm-py CLI
+
+Only use the connector when the user explicitly wants the agent to send the supplied question to their selected NotebookLM notebook. It requires a separately installed and authenticated `notebooklm` command; this repository never installs or bundles it.
+
+```bash
+python3 scripts/export_notebooklm_atlas.py \
+  --notebook <notebook-id> \
+  --question "What are the main findings?" \
+  --output-dir ./output/private-notebook-export \
+  --title "Research Atlas" \
+  --yes
+```
+
+The connector uses `notebooklm auth check`, `source list --json`, and `ask --json`. It never uses `ask --new`, which deletes the current server-side conversation. The output directory contains private JSON exports; review it before sharing or committing.
 
 ## What the output contains
 

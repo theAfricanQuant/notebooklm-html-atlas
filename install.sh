@@ -21,7 +21,9 @@ case "$1" in
   *) usage ;;
 esac
 
-mkdir -p "$target/scripts"
+mkdir -p "$target/scripts" "$target/references"
 cp "$root/SKILL.md" "$target/SKILL.md"
 cp "$root/scripts/build_html_report.py" "$target/scripts/build_html_report.py"
+cp "$root/scripts/export_notebooklm_atlas.py" "$target/scripts/export_notebooklm_atlas.py"
+[ ! -d "$root/references" ] || cp -R "$root/references/." "$target/references/"
 printf 'Installed NotebookLM HTML Atlas skill files in %s\n' "$target"
