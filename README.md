@@ -31,6 +31,21 @@ python3 scripts/build_html_report.py \
 
 Open `output/research-atlas.html` in a browser. The repository includes no private NotebookLM data; the examples are synthetic.
 
+## Optional: Diagram Design visuals
+
+For a polished relationship map, invoke the separately installed `diagram-design` skill with a bounded brief from the NotebookLM answer, save its reviewed static SVG, and embed it directly in the atlas:
+
+```bash
+python3 scripts/build_html_report.py \
+  --sources /path/to/sources.json \
+  --qa /path/to/analysis.json \
+  --diagram "Causal relationships=./diagrams/causal-relationships.svg" \
+  --title "My research atlas" \
+  --output ./output/my-research-atlas.html
+```
+
+The agent must also visually verify that every SVG label and annotation fits its node and `viewBox`; it should wrap or resize text rather than let it bleed outside a boundary. The report remains self-contained: SVG assets are inlined and their IDs are namespaced. The renderer rejects scripts, event handlers, malformed SVG, and external/data URLs. See [the Diagram Design handoff](references/diagram-design-handoff.md) for the agent workflow. Diagram Design is optional; the base renderer has a simpler native causal cascade when no designed SVG is supplied.
+
 ## Optional: connect an already-authorized notebooklm-py CLI
 
 If `notebooklm` is already installed and authenticated on the local machine, the optional bridge can export a notebook's source list, ask one normal question, and build a report in one command:

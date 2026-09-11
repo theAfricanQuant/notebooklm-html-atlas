@@ -7,6 +7,7 @@ import hashlib
 import html
 import json
 import re
+import xml.etree.ElementTree as ET
 from collections import Counter, defaultdict
 from datetime import date
 from pathlib import Path
@@ -141,7 +142,13 @@ def causal_svg(code_lines: list[str]) -> str | None:
     markup.append('</svg></figure>')
     return ''.join(markup)
 
-def markdown_html(answer: str, refs: list[dict], source_map: dict[str, dict]) -> str:
+def code_block_html(code_lines: list[str], render_causal: bool) -> str:
+    chart = causal_svg(code_lines)
+    if chart:
+        return chart if render_causal else ""
+    return '<pre><code>' + e('\n'.join(code_lines)) + '</code></pre>'
+
+def markdown_html(answer: str, refs: list[dict], source_map: dict[str, dict], render_causal: bool = True) -> str:
     """Render a safe Markdown subset as semantic HTML without adding dependencies."""
     text, tokens = citation_tokens(answer, refs, source_map)
     result: list[str] = []
@@ -169,8 +176,7 @@ def markdown_html(answer: str, refs: list[dict], source_map: dict[str, dict]) ->
             flush_paragraph()
             flush_list()
             if in_code:
-                chart = causal_svg(code_lines)
-                result.append(chart if chart else '<pre><code>' + e('\n'.join(code_lines)) + '</code></pre>')
+                result.append(code_block_html(code_lines, render_causal))
                 code_lines = []
             in_code = not in_code
             continue
@@ -202,27 +208,89 @@ def markdown_html(answer: str, refs: list[dict], source_map: dict[str, dict]) ->
         else:
             paragraph.append(line.strip())
     if in_code:
-        chart = causal_svg(code_lines)
-        result.append(chart if chart else '<pre><code>' + e('\n'.join(code_lines)) + '</code></pre>')
+        result.append(code_block_html(code_lines, render_causal))
     flush_paragraph()
     flush_list()
     return ''.join(result) or '<p>No answer supplied.</p>'
 
+def diagram_html(specifications: list[str]) -> list[str]:
+    """Embed reviewed, static SVG diagrams produced by a Diagram Design workflow."""
+    output: list[str] = []
+    blocked = re.compile(r'<\s*(?:script|foreignObject|iframe|object|embed)\b|\bon\w+\s*=|(?:href|xlink:href)\s*=\s*["\']\s*(?:https?:|javascript:|data:)|url\s*\(\s*["\']?\s*(?:https?:|javascript:|data:)', re.I)
+    for index, specification in enumerate(specifications, 1):
+        label, separator, filename = specification.partition('=')
+        if not separator:
+            filename, label = label, Path(label).stem.replace('-', ' ')
+        label = label.strip() or f'Diagram {index}'
+        path = Path(filename).expanduser()
+        if not path.is_file():
+            raise ValueError(f'diagram file not found: {path}')
+        raw = path.read_text(encoding='utf-8')
+        if len(raw.encode('utf-8')) > 2_000_000:
+            raise ValueError(f'diagram is larger than 2 MB: {path}')
+        match = re.search(r'<svg\b[^>]*>.*?</svg\s*>', raw, re.I | re.S)
+        if not match:
+            raise ValueError(f'diagram must contain one SVG element: {path}')
+        svg = match.group(0)
+        if blocked.search(svg):
+            raise ValueError(f'diagram contains unsafe or external SVG content: {path}')
+        try:
+            ET.fromstring(svg)
+        except ET.ParseError as error:
+            raise ValueError(f'diagram SVG is not well-formed: {path}') from error
+
+        prefix = f'atlas-diagram-{index}-'
+        ids = list(dict.fromkeys(re.findall(r'\bid=["\']([^"\']+)["\']', svg)))
+        replacements = {old: prefix + old for old in ids}
+        for old, new in replacements.items():
+            svg = re.sub(rf'(\bid=["\']){re.escape(old)}(["\'])', rf'\1{new}\2', svg)
+            svg = svg.replace(f'url(#{old})', f'url(#{new})')
+            svg = re.sub(rf'(["\'])#{re.escape(old)}\1', rf'\1#{new}\1', svg)
+
+        def rewrite_labelledby(match: re.Match) -> str:
+            names = ' '.join(replacements.get(value, value) for value in match.group(2).split())
+            return match.group(1) + names + match.group(3)
+
+        svg = re.sub(r'(\baria-labelledby=["\'])([^"\']*)(["\'])', rewrite_labelledby, svg)
+        output.append(f'<figure class="diagram-asset"><figcaption><span>Diagram design</span><strong>{e(label)}</strong></figcaption>{svg}</figure>')
+    return output
+
 def flow(source_count: int, questions: int, excerpts: int) -> str:
-    blocks = [("NOTEBOOKLM", "Source export", f"{source_count} sources"), ("NOTEBOOKLM", "Q&A export", f"{questions} questions"), ("LOCAL", "Citation map", f"{excerpts} source references"), ("OUTPUT", "HTML atlas", "1 portable page")]
-    markup = ['<svg viewBox="0 0 920 205" class="flow" role="img" aria-label="NotebookLM exports become a local citation-linked HTML report"><defs><marker id="arr" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L8 4L0 8Z"/></marker></defs>']
+    """Render an overview flow whose labels always remain inside their cards."""
+    blocks = [
+        ("NOTEBOOKLM", "Source export", f"{source_count} sources"),
+        ("NOTEBOOKLM", "Q&A export", f"{questions} questions"),
+        ("LOCAL", "Citation map", f"{excerpts} source references"),
+        ("OUTPUT", "HTML atlas", "1 portable page"),
+    ]
+
+    def multiline(x: int, y: int, lines: list[str], css_class: str, leading: int = 20) -> str:
+        spans = []
+        for index, line in enumerate(lines):
+            if index == 0:
+                spans.append(f'<tspan x="{x}" y="{y}">{e(line)}</tspan>')
+            else:
+                spans.append(f'<tspan x="{x}" dy="{leading}">{e(line)}</tspan>')
+        return f'<text class="{css_class}">' + ''.join(spans) + '</text>'
+
+    markup = ['<svg viewBox="0 0 920 225" class="flow" role="img" aria-label="NotebookLM exports become a local citation-linked HTML report"><defs><marker id="arr" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L8 4L0 8Z"/></marker></defs>']
     for index, (eyebrow, label, metric) in enumerate(blocks):
         x = 20 + index * 230
         if index:
-            markup.append(f'<path class="arrow" d="M{x - 70} 103H{x}"/>')
-        markup.append(f'<g><rect x="{x}" y="40" width="150" height="125"/><text x="{x + 18}" y="73" class="eyebrow">{eyebrow}</text><text x="{x + 18}" y="105" class="flow-label">{label}</text><text x="{x + 18}" y="139" class="flow-metric">{metric}</text></g>')
-    return "".join(markup) + "</svg>"
+            markup.append(f'<path class="arrow" d="M{x - 80} 111H{x}"/>')
+        markup.append(f'<g><rect x="{x}" y="36" width="150" height="150"/><text x="{x + 18}" y="70" class="eyebrow">{e(eyebrow)}</text>')
+        markup.append(multiline(x + 18, 106, wrap_label(label, 15), 'flow-label', 18))
+        markup.append(multiline(x + 18, 145, wrap_label(metric, 13), 'flow-metric', 20))
+        markup.append('</g>')
+    return ''.join(markup) + '</svg>'
 
 
-def render(title: str, sources_file: dict, qas: list[dict]) -> str:
+def render(title: str, sources_file: dict, qas: list[dict], diagrams: list[str] | None = None) -> str:
     sources = [item for item in sources_file.get("sources", []) if item.get("id") and str(item.get("title") or "").strip()]
     source_map = {str(item["id"]): item for item in sources}
     citations = [unique_citations(qa) for qa in qas]
+    diagrams = diagrams or []
+    diagram_section = f'<section class="diagram-section"><h2>Visual analysis</h2><div class="diagram-assets">{"".join(diagrams)}</div></section>' if diagrams else ""
     excerpts: dict[str, list[str]] = defaultdict(list)
     for refs in citations:
         for ref in refs:
@@ -236,14 +304,14 @@ def render(title: str, sources_file: dict, qas: list[dict]) -> str:
     for index, (qa, refs) in enumerate(zip(qas, citations), 1):
         cited = sorted({str(ref.get("source_id")) for ref in refs if str(ref.get("source_id")) in source_map})
         links = "".join(f'<li><a href="#{anchor(source_map[item]["id"])}">{e(source_map[item].get("title"))}</a></li>' for item in cited)
-        qa_markup.append(f'<article class="qa"><div class="qnum">Q{index:02}</div><div><p class="question">{e(qa.get("question") or f"NotebookLM question {index}")}</p><div class="answer">{markdown_html(str(qa.get("answer") or "No answer supplied."), refs, source_map)}</div><details><summary>{len(cited)} cited source(s)</summary><ul>{links or "<li>No granular citations supplied</li>"}</ul></details></div></article>')
+        qa_markup.append(f'<article class="qa"><div class="qnum">Q{index:02}</div><div><p class="question">{e(qa.get("question") or f"NotebookLM question {index}")}</p><div class="answer">{markdown_html(str(qa.get("answer") or "No answer supplied."), refs, source_map, render_causal=not diagrams)}</div><details><summary>{len(cited)} cited source(s)</summary><ul>{links or "<li>No granular citations supplied</li>"}</ul></details></div></article>')
     source_markup = []
     for source in sources:
         source_id, url = str(source["id"]), str(source.get("url") or "")
         original = f'<a class="source-link" href="{e(url)}" target="_blank" rel="noreferrer">Open source <span aria-hidden="true">↗</span></a>' if url.startswith(("https://", "http://")) else '<span class="source-unavailable">Original URL unavailable</span>'
         source_markup.append(f'<article id="{anchor(source_id)}" class="source"><div class="meta">{e(source_type(source))} · {e(str(source.get("created_at") or "")[:10])}</div><h3>{e(source.get("title"))}</h3><footer>{original}</footer></article>')
     return f'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{e(title)}</title><style>
-:root{{--paper:#eaf0eb;--ink:#142c25;--pine:#19594c;--leaf:#5f9368;--line:#b6c8bc;--wash:#d7e4da;--soft:#4f665c;--signal:#e4ad29}}*{{box-sizing:border-box}}html{{scroll-behavior:smooth}}body{{margin:0;background:var(--paper);color:var(--ink);font:16px/1.55 Georgia,serif}}main{{max-width:1120px;margin:auto;padding:28px}}header{{padding:48px 0 30px;border-bottom:1px solid var(--line)}}.eyebrow,.meta,.qnum{{font:600 11px Arial,sans-serif;letter-spacing:.12em;color:var(--soft)}}h1{{max-width:760px;margin:14px 0 15px;font:500 clamp(2.8rem,8vw,6rem)/.88 Arial,sans-serif;letter-spacing:-.065em}}.lede{{max-width:660px;color:var(--soft);font-size:1.1rem}}h2{{margin:54px 0 16px;padding-bottom:10px;border-bottom:1px solid var(--line);font:500 1.9rem/1 Arial,sans-serif;letter-spacing:-.045em}}h3{{font:600 1.1rem/1.2 Arial,sans-serif;letter-spacing:-.025em}}a{{color:var(--pine);text-underline-offset:3px}}.flow{{display:block;width:100%;margin:31px 0 8px}}.flow rect{{fill:var(--wash);stroke:var(--line)}}.flow .arrow{{fill:none;stroke:var(--pine);stroke-width:1.5;marker-end:url(#arr)}}.flow #arr path{{fill:var(--pine)}}.flow .eyebrow{{font:600 11px Arial,sans-serif;letter-spacing:.1em;fill:var(--soft)}}.flow-label{{font:600 16px Arial,sans-serif;fill:var(--ink)}}.flow-metric{{font:600 18px Arial,sans-serif;fill:var(--pine)}}.split{{display:grid;grid-template-columns:1fr 1.5fr;gap:40px}}.bar{{display:grid;grid-template-columns:92px 1fr 20px;gap:9px;align-items:center;margin:11px 0;font:13px Arial,sans-serif}}.bar i{{height:8px;background:var(--wash)}}.bar b{{display:block;height:100%;background:var(--leaf)}}.notice{{align-self:start;padding:19px;border-left:3px solid var(--signal);background:color-mix(in srgb,var(--signal) 12%,transparent);color:var(--soft)}}.qa{{display:grid;grid-template-columns:52px 1fr;gap:17px;padding:22px 0;border-bottom:1px solid var(--line)}}.qa h3{{margin:0 0 9px}}.qa p{{max-width:780px;margin:0}}.cite{{display:inline-block;margin:0 2px;padding:1px 5px;background:var(--wash);font:12px Arial,sans-serif;text-decoration:none}}details{{margin-top:11px}}summary{{cursor:pointer;color:var(--pine);font:13px Arial,sans-serif}}details p,details ul{{margin:9px 0 0}}.sources{{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:15px}}.source{{padding:18px;background:#f8fbf8;border:1px solid var(--line)}}.source h3{{margin:12px 0 8px}}.source>p{{color:var(--soft);font-size:.93rem}}.source footer{{display:flex;justify-content:space-between;gap:8px;padding-top:11px;border-top:1px solid var(--line);font:11px Arial,sans-serif;color:var(--soft)}}body>main>footer{{margin-top:54px;padding:20px 0;border-top:1px solid var(--line);font:12px Arial,sans-serif;color:var(--soft)}}@media(max-width:720px){{main{{padding:18px}}.flow{{min-width:900px}}header+section{{overflow-x:auto}}.split,.sources{{grid-template-columns:1fr}}}}
+:root{{--paper:#eaf0eb;--ink:#142c25;--pine:#19594c;--leaf:#5f9368;--line:#b6c8bc;--wash:#d7e4da;--soft:#4f665c;--signal:#e4ad29}}*{{box-sizing:border-box}}html{{scroll-behavior:smooth}}body{{margin:0;background:var(--paper);color:var(--ink);font:16px/1.55 Georgia,serif}}main{{max-width:1120px;margin:auto;padding:28px}}header{{padding:48px 0 30px;border-bottom:1px solid var(--line)}}.eyebrow,.meta,.qnum{{font:600 11px Arial,sans-serif;letter-spacing:.12em;color:var(--soft)}}h1{{max-width:760px;margin:14px 0 15px;font:500 clamp(2.8rem,8vw,6rem)/.88 Arial,sans-serif;letter-spacing:-.065em}}.lede{{max-width:660px;color:var(--soft);font-size:1.1rem}}h2{{margin:54px 0 16px;padding-bottom:10px;border-bottom:1px solid var(--line);font:500 1.9rem/1 Arial,sans-serif;letter-spacing:-.045em}}h3{{font:600 1.1rem/1.2 Arial,sans-serif;letter-spacing:-.025em}}a{{color:var(--pine);text-underline-offset:3px}}.flow{{display:block;width:100%;margin:31px 0 8px}}.flow rect{{fill:var(--wash);stroke:var(--line)}}.flow .arrow{{fill:none;stroke:var(--pine);stroke-width:1.5;marker-end:url(#arr)}}.flow #arr path{{fill:var(--pine)}}.flow .eyebrow{{font:600 11px Arial,sans-serif;letter-spacing:.1em;fill:var(--soft)}}.flow-label{{font:600 16px Arial,sans-serif;fill:var(--ink)}}.flow-metric{{font:600 16px Arial,sans-serif;fill:var(--pine)}}.split{{display:grid;grid-template-columns:1fr 1.5fr;gap:40px}}.bar{{display:grid;grid-template-columns:92px 1fr 20px;gap:9px;align-items:center;margin:11px 0;font:13px Arial,sans-serif}}.bar i{{height:8px;background:var(--wash)}}.bar b{{display:block;height:100%;background:var(--leaf)}}.notice{{align-self:start;padding:19px;border-left:3px solid var(--signal);background:color-mix(in srgb,var(--signal) 12%,transparent);color:var(--soft)}}.qa{{display:grid;grid-template-columns:52px 1fr;gap:17px;padding:22px 0;border-bottom:1px solid var(--line)}}.qa h3{{margin:0 0 9px}}.qa p{{max-width:780px;margin:0}}.cite{{display:inline-block;margin:0 2px;padding:1px 5px;background:var(--wash);font:12px Arial,sans-serif;text-decoration:none}}details{{margin-top:11px}}summary{{cursor:pointer;color:var(--pine);font:13px Arial,sans-serif}}details p,details ul{{margin:9px 0 0}}.sources{{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:15px}}.source{{padding:18px;background:#f8fbf8;border:1px solid var(--line)}}.source h3{{margin:12px 0 8px}}.source>p{{color:var(--soft);font-size:.93rem}}.source footer{{display:flex;justify-content:space-between;gap:8px;padding-top:11px;border-top:1px solid var(--line);font:11px Arial,sans-serif;color:var(--soft)}}body>main>footer{{margin-top:54px;padding:20px 0;border-top:1px solid var(--line);font:12px Arial,sans-serif;color:var(--soft)}}@media(max-width:720px){{main{{padding:18px}}.flow{{min-width:900px}}header+section{{overflow-x:auto}}.split,.sources{{grid-template-columns:1fr}}}}
 
 /* Editorial reading layer: semantic answer elements now carry the hierarchy. */
 :root{{--paper:#edf3ee;--ink:#12241c;--pine:#155f4c;--leaf:#599b75;--line:#b8cbbd;--wash:#dce9df;--soft:#4d665a;--signal:#d27947;--deep:#0d2a22}}
@@ -258,7 +326,9 @@ h2{{margin-top:64px;font-size:2.05rem}}.split{{gap:54px}}.flow{{margin:38px 0 4p
 
 .causal-map{{margin:2.1rem 0 2.3rem;padding:20px 20px 10px;border:1px solid #c7d9ca;border-radius:12px;background:linear-gradient(135deg,#f8fcf8,#eef7f0);box-shadow:0 18px 36px rgba(17,49,37,.08)}}
 .causal-map figcaption{{display:flex;align-items:baseline;gap:12px;margin:0 7px 16px;font-family:Arial,sans-serif}}.causal-map figcaption span{{color:#a85532;font-size:11px;font-weight:800;letter-spacing:.13em;text-transform:uppercase}}.causal-map figcaption strong{{font-size:1.05rem;letter-spacing:-.02em}}.causal-map svg{{display:block;width:100%;height:auto}}.causal-map .causal-node rect{{stroke-width:1.5}}.causal-map .causal-step{{font:800 12px Arial,sans-serif;letter-spacing:.08em}}.causal-map .causal-label{{font:600 17px/1.2 Arial,sans-serif;letter-spacing:-.015em}}.causal-map .causal-link{{fill:none;stroke:#4a765f;stroke-width:2.25;stroke-linecap:round}}.causal-map #causal-arrow path{{fill:#4a765f}}.causal-map .causal-node-0 rect{{fill:#dcefe3;stroke:#60a77a}}.causal-map .causal-node-0 .causal-step{{fill:#277b52}}.causal-map .causal-node-0 .causal-label{{fill:#164c36}}.causal-map .causal-node-1 rect{{fill:#dcecf0;stroke:#5a98ad}}.causal-map .causal-node-1 .causal-step{{fill:#35758b}}.causal-map .causal-node-1 .causal-label{{fill:#1c4c60}}.causal-map .causal-node-2 rect{{fill:#f7ead8;stroke:#c99450}}.causal-map .causal-node-2 .causal-step{{fill:#a56826}}.causal-map .causal-node-2 .causal-label{{fill:#6e4319}}.causal-map .causal-node-3 rect{{fill:#eee3f3;stroke:#a476b5}}.causal-map .causal-node-3 .causal-step{{fill:#7d4d92}}.causal-map .causal-node-3 .causal-label{{fill:#51315f}}.causal-map .causal-node-4 rect{{fill:#f7e3e0;stroke:#c57968}}.causal-map .causal-node-4 .causal-step{{fill:#a45040}}.causal-map .causal-node-4 .causal-label{{fill:#6a3028}}@media(max-width:620px){{.causal-map{{margin-left:-4px;margin-right:-4px;padding:14px 8px 7px}}.causal-map figcaption{{display:block}}.causal-map figcaption strong{{display:block;margin-top:4px}}.causal-map .causal-label{{font-size:19px}}.causal-map svg{{min-width:620px}}.causal-map{{overflow-x:auto}}}}
-</style></head><body><main><header><div class="eyebrow">NotebookLM HTML Atlas · {e(date.today().isoformat())}</div><h1>{e(title)}</h1><p class="lede">A portable view of source metadata, question answers, and the evidence chunks NotebookLM returned.</p></header><section>{flow(len(sources), len(qas), sum(map(len, excerpts.values())))}</section><section class="split"><div><h2>Source mix</h2>{bars or "No sources found."}</div><aside class="notice">The page preserves metadata and cited excerpts in the supplied exports. It does not download full PDFs, videos, or web pages, and it does not independently validate NotebookLM's claims.</aside></section><section><h2>Questions &amp; evidence</h2>{''.join(qa_markup) or '<p>No Q&amp;A exports included.</p>'}</section><section><h2>Source library</h2><div class="sources">{''.join(source_markup)}</div></section><footer>Generated locally from NotebookLM JSON exports. External links point to the original sources.</footer></main></body></html>'''
+
+.diagram-section{{margin-top:64px}}.diagram-assets{{display:grid;gap:24px}}.diagram-asset{{margin:0;padding:22px;border:1px solid #c5d6c8;border-radius:8px;background:rgba(252,255,252,.88);box-shadow:0 10px 24px rgba(17,49,37,.045)}}.diagram-asset figcaption{{display:flex;gap:12px;align-items:baseline;margin:0 0 18px;font-family:Arial,sans-serif}}.diagram-asset figcaption span{{color:#a85532;font-size:11px;font-weight:800;letter-spacing:.13em;text-transform:uppercase}}.diagram-asset figcaption strong{{font-size:1.05rem;letter-spacing:-.02em}}.diagram-asset svg{{display:block;width:100%;height:auto;max-width:100%}}@media(max-width:620px){{.diagram-asset{{padding:14px;overflow-x:auto}}.diagram-asset svg{{min-width:580px}}}}
+</style></head><body><main><header><div class="eyebrow">NotebookLM HTML Atlas · {e(date.today().isoformat())}</div><h1>{e(title)}</h1><p class="lede">A portable view of source metadata, question answers, and citation-linked claims.</p></header><section>{flow(len(sources), len(qas), sum(map(len, excerpts.values())))}</section><section class="split"><div><h2>Source mix</h2>{bars or "No sources found."}</div><aside class="notice">The page preserves source metadata and citation links. It does not download source content, and it does not independently validate NotebookLM's claims.</aside></section>{diagram_section}<section><h2>Questions &amp; evidence</h2>{''.join(qa_markup) or '<p>No Q&amp;A exports included.</p>'}</section><section><h2>Source library</h2><div class="sources">{''.join(source_markup)}</div></section><footer>Generated locally from NotebookLM JSON exports. External links point to the original sources.</footer></main></body></html>'''
 
 
 def main() -> None:
@@ -267,6 +337,7 @@ def main() -> None:
     parser.add_argument("--qa", action="append", default=[])
     parser.add_argument("--title", required=True)
     parser.add_argument("--output", required=True)
+    parser.add_argument("--diagram", action="append", default=[], metavar="[LABEL=]PATH", help="Embed a reviewed static SVG, typically produced by Diagram Design. Repeat as needed.")
     args = parser.parse_args()
     with open(args.sources, encoding="utf-8") as handle:
         sources = json.load(handle)
@@ -274,9 +345,13 @@ def main() -> None:
     for path in args.qa:
         with open(path, encoding="utf-8") as handle:
             qas.append(json.load(handle))
+    try:
+        diagrams = diagram_html(args.diagram)
+    except ValueError as error:
+        parser.error(str(error))
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(render(args.title, sources, qas), encoding="utf-8")
+    output.write_text(render(args.title, sources, qas, diagrams), encoding="utf-8")
     print(f"CREATED: {output}")
 
 

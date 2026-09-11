@@ -13,7 +13,9 @@ Create a static research report from a NotebookLM source-list export and zero or
 - Obtain JSON exports only through the user's already-authorized NotebookLM workflow. Never include cookies, account data, full source text, or private exports in a public repository.
 - Source cards are link-only: preserve title/type/date and the original URL, but do not copy source summaries or evidence excerpts into the HTML.
 - Citations link claims to their source cards. Explain that a citation represents the evidence NotebookLM returned, not independent fact-checking.
-- Use native SVG for causal diagrams; do not add Mermaid or a JavaScript chart dependency.
+- Do not use Mermaid or a JavaScript chart dependency.
+- Every diagram must keep every label, citation, and arrow annotation inside its intended container and SVG `viewBox`. Wrap long labels with SVG `<tspan>` lines, enlarge or simplify a node when needed, and visually inspect the rendered report before sharing.
+- For a simple causal chain, use the built-in SVG fallback. When the user asks for a polished causal map, a relationship diagram, or another nontrivial visual, invoke the installed `diagram-design` skill and embed its reviewed static SVG with `--diagram`. Read [the Diagram Design handoff](references/diagram-design-handoff.md) first.
 
 ## Build from existing exports
 
@@ -41,6 +43,21 @@ python3 scripts/export_notebooklm_atlas.py \
 ```
 
 The connector uses `notebooklm auth check`, `source list --json`, and `ask --json`. It never uses `ask --new`, which deletes the current server-side conversation. The output directory contains private JSON exports; review it before sharing or committing.
+
+## Optional: Diagram Design visual layer
+
+When a visual would materially clarify the research, call the installed `diagram-design` skill after extracting only the relevant claims and relationships. Ask it to produce an accessible, static SVG in the report's `diagrams/` folder, then embed it:
+
+```bash
+python3 scripts/build_html_report.py \
+  --sources /absolute/path/sources.json \
+  --qa /absolute/path/analysis.json \
+  --diagram "Causal relationships=./diagrams/causal-relationships.svg" \
+  --title "Research Atlas" \
+  --output ./output/research-atlas.html
+```
+
+The generator embeds the reviewed SVG directly, so the resulting report remains one portable HTML file. It rejects scripts, event handlers, external URLs, and malformed SVG. Diagram Design is optional; without it, the built-in causal cascade remains available.
 
 ## What the output contains
 
