@@ -1,0 +1,29 @@
+{
+  "notebook_id": "synthetic-focus-notebook",
+  "sources": [
+    {
+      "id": "video-1",
+      "title": "Focus & deliberate practice",
+      "type": "SourceType.YOUTUBE",
+      "url": "https://example.test/focus",
+      "created_at": "2026-09-11T12:00:00Z",
+      "summary": "A fictional video source used to demonstrate how a source card and evidence link appear in the report."
+    },
+    {
+      "id": "pdf-2",
+      "title": "Attention restoration study",
+      "type": "SourceType.PDF",
+      "url": "https://example.test/attention",
+      "created_at": "2026-09-09T09:00:00Z",
+      "summary": "A fictional PDF source used to demonstrate a second source type and a separate cited excerpt."
+    },
+    {
+      "id": "web-3",
+      "title": "Sleep and cognitive recovery",
+      "type": "SourceType.WEB_PAGE",
+      "url": "https://example.test/sleep",
+      "created_at": "2026-09-08T10:00:00Z",
+      "summary": "A fictional web source included in the source library but not cited by the sample question."
+    }
+  ]
+}

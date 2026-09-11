@@ -1,0 +1,14 @@
+{
+  "question": "What supports sustained focus?",
+  "answer": "The sample answer suggests protecting uninterrupted blocks of work [1] and pairing them with deliberate feedback and recovery [2].",
+  "references": [
+    {
+      "source_id": "video-1",
+      "cited_text": "Long, uninterrupted periods support sustained focus by reducing the cost of repeatedly returning to a demanding task."
+    },
+    {
+      "source_id": "pdf-2",
+      "cited_text": "Deliberate practice benefits from clear feedback, while recovery periods help preserve attention across repeated sessions."
+    }
+  ]
+}
